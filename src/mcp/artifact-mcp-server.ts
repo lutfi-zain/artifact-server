@@ -598,7 +598,7 @@ export function createArtifactMcpServer(
           providerState: z.enum(gitHistoryProviderStates),
         }).strict(),
         publishing: z.object({
-          acceptsInlineContent: z.literal(false),
+          acceptsInlineContent: z.boolean(),
           localPathTool: z.literal(false),
           maximumDeclaredFiles: z.number(),
           maximumUploadPlanRequestBytes: z.number(),
@@ -619,7 +619,7 @@ export function createArtifactMcpServer(
         dependencies.linkedArtifacts === true,
         dependencies.gitHistory,
       ),
-      "Artifact Server publishes actual files through an upload plan. It does not accept inline HTML, CSS, JavaScript, or base64 content."),
+      "Artifact Server supports 1-step direct publishing for Markdown/HTML via artifact_publish_direct as well as multi-file presigned uploads via artifact_create_upload."),
   );
 
   registerNudgedTool(
@@ -1190,7 +1190,7 @@ export function createArtifactMcpServer(
     {
       title: "Begin a file upload",
       description:
-        "Begin publishing actual files. Supply relative paths, byte sizes, SHA-256 fingerprints, media types, and the entry file. Upload each file to its returned URL, then call artifact_commit_upload. Do not send file bytes through MCP.",
+        "Begin publishing actual files via a multi-file upload plan. Supply relative paths, byte sizes, SHA-256 fingerprints, media types, and the entry file. Upload each file to its returned URL, then call artifact_commit_upload. NOTE: For inline Markdown documents, reports, or HTML artifacts, prefer artifact_publish_direct for single-step publication.",
       inputSchema: z.object({
         entryPath: z.string().min(1).max(1_024),
         files: z.array(declaredFileSchema).min(1).max(maximumDeclaredFiles),
@@ -1293,7 +1293,7 @@ export function createArtifactMcpServer(
       description:
         "Publish a new artifact or report directly in a single tool call from inline Markdown or HTML, without presigned uploads or external PUT calls. Renders Markdown and Mermaid diagrams automatically.",
       inputSchema: z.object({
-        accessSetting: accessSettingSchema.default(accessSettings.publicLink).describe("Access setting: 'public_link' (default) or 'account_required'"),
+        accessSetting: accessSettingSchema.default(accessSettings.accountRequired).describe("Access setting: 'account_required' (private, default) or 'public_link' (publicly accessible)"),
         content: z.string().optional().describe("Markdown or HTML text content to publish"),
         entryPath: z.string().default("index.html").describe("Entry filename (default: index.html)"),
         files: z
@@ -2510,20 +2510,19 @@ const destructiveWriteAnnotations = {
 
 function agentInstructions(mode: "local" | "remote"): string {
   return [
-    "Artifact Server stores actual files as immutable versions. It does not accept inline HTML, CSS, JavaScript, base64, or invented file contents through MCP.",
+    "Artifact Server stores actual files as immutable versions.",
+    "For publishing Markdown documents, incident reports, or HTML artifacts directly in a single tool call, use artifact_publish_direct. Supply name, content (Markdown or HTML), format, optional accessSetting ('account_required' for private internal docs by default, or 'public_link' for public sharing), and optional projectId.",
+    "For multi-file directory uploads or large static bundles, use artifact_create_upload, stream files to the returned upload URLs, then call artifact_commit_upload.",
     "Start with artifact_capabilities when you do not know this installation's limits.",
     "Artifacts belong to projects. Omit projectId only when the installation has one active project; otherwise call project_list and choose explicitly.",
-    "For publishing, inspect the selected file or finished directory on the client, compute each relative path, byte length, media type, and SHA-256 fingerprint, call artifact_create_upload, PUT the exact bytes to every returned uploadUrl using the same bearer credential, then call artifact_commit_upload.",
     "After publishing, always give the user links.review first so they can see the exact version full screen and comment. Mention links.version second when the raw artifact is useful. Do not put content bootstrap URLs or credentials in chat.",
     "When publishing a new version, first call artifact_get and pass its current version ID as expectedCurrentVersionId. On conflict, inspect the new current version before retrying.",
     "Use a stable application idempotency key when retrying the same mutation. Use a new key only for an intentional new operation.",
-    "Reviewers leave comment threads on an artifact version. Use comment_list and comment_get to read them, comment_create, comment_reply, and comment_update to write, comment_resolve to close or reopen a thread, and comment_delete to remove one you own; deleting a thread also deletes its replies. Sent comments cannot be deleted while their dispatch is queued, claimed, or delivered. comment_clear removes every resolved thread — or all threads — on one artifact at once and reports how many sent comments it skipped.",
-    "comment_list hides threads an agent dispatch currently holds unless you pass dispatched: \"include\" or \"only\"; comment_get still reads a dispatched thread directly by id.",
-    "dispatch_inbox is this caller's mailbox for annotation bundles a reviewer dispatched to it: list registers the caller as a mailbox-tier agent and shows its queued dispatches, claim takes the oldest one as a rendered message, and delivered or failed reports the outcome. Address a delivered bundle's threads with comment_reply, then comment_resolve.",
-    "artifact_get returns the current complete manifest, current.links.review for exact full-screen Review, and links.artifact for the moving latest version. artifact_open returns reviewUrl for exact full-screen Review and browserUrl for raw immutable content. Prefer the Review URL for human handoff, and never describe browserUrl as a Review link. A remote server never opens a browser on the server machine.",
+    "Reviewers leave comment threads on an artifact version. Use comment_list and comment_get to read them, comment_create, comment_reply, and comment_update to write, comment_resolve to close or reopen a thread, and comment_delete to remove one you own.",
+    "artifact_get returns the current complete manifest, current.links.review for exact full-screen Review, and links.artifact for the moving latest version. artifact_open returns reviewUrl for exact full-screen Review and browserUrl for raw immutable content. Prefer the Review URL for human handoff, and never describe browserUrl as a Review link.",
     mode === "local"
-      ? "This is a local MCP connection, but the MCP protocol still carries metadata rather than file bytes. Use the bundled Artifact Server skill or CLI to upload a local path."
-      : "This is a remote MCP connection. The server cannot read paths on the agent's computer; use the returned upload plan or the bundled Artifact Server skill.",
+      ? "This is a local MCP connection. Use artifact_publish_direct for inline content or the bundled Artifact Server skill / CLI to upload a local path."
+      : "This is a remote MCP connection. Use artifact_publish_direct for inline content, or artifact_create_upload for multi-file directory bundles.",
   ].join("\n");
 }
 
@@ -2549,15 +2548,13 @@ function capabilities(
     comparison: {maximumTextFileBytes: maximumTextDiffBytes},
     deployment: {mode},
     publishing: {
-      acceptsInlineContent: false as const,
+      acceptsInlineContent: true as const,
       localPathTool: false as const,
       maximumDeclaredFiles,
       maximumUploadPlanRequestBytes,
       workflow: [
-        "Inspect one actual file or finished directory on the client.",
-        "Call artifact_create_upload with portable file metadata.",
-        "Upload each exact file to its returned uploadUrl.",
-        "Call artifact_commit_upload with an idempotency key and optimistic version when updating.",
+        "To publish Markdown reports, documents, or HTML artifacts directly, call artifact_publish_direct in 1 step.",
+        "For multi-file directories or large bundles, use artifact_create_upload with presigned upload URLs, then call artifact_commit_upload.",
         "Inspect the returned immutable version and browser links.",
       ],
     },
