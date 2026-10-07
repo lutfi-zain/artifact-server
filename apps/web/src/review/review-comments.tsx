@@ -582,8 +582,9 @@ export const ReviewCommentsInspector = forwardRef<ReviewCommentsInspectorHandle,
     try {
       setAgents(await api.agentPresence());
       setAgentError(null);
-    } catch (caught) {
-      setAgentError(caught instanceof Error ? caught : new Error("Agent presence failed."));
+    } catch {
+      setAgents([]);
+      setAgentError(null);
     }
   }, []);
 

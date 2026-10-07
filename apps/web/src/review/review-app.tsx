@@ -595,7 +595,7 @@ function ArtifactReview({
   const [detailError, setDetailError] = useState<Error | null>(null);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("details");
   const [catalogOpen, setCatalogOpen] = useState(session.principal.id !== "guest");
-  const [inspectorOpen, setInspectorOpen] = useState(readInitialInspectorOpen);
+  const [inspectorOpen, setInspectorOpen] = useState(session.principal.id === "guest" ? false : readInitialInspectorOpen);
   const [opening, setOpening] = useState(false);
   const [focusMode, setFocusMode] = useState(initialLocation.view === "focus" || session.principal.id === "guest");
   const [focusCommentsOpen, setFocusCommentsOpen] = useState(false);
