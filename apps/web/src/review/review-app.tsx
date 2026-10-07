@@ -593,11 +593,11 @@ function ArtifactReview({
   const [selectedVersion, setSelectedVersion] = useState<ArtifactVersion | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<Error | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("details");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(session.principal.id === "guest" ? "files" : "details");
   const [catalogOpen, setCatalogOpen] = useState(session.principal.id !== "guest");
-  const [inspectorOpen, setInspectorOpen] = useState(session.principal.id === "guest" ? false : readInitialInspectorOpen);
+  const [inspectorOpen, setInspectorOpen] = useState(readInitialInspectorOpen);
   const [opening, setOpening] = useState(false);
-  const [focusMode, setFocusMode] = useState(initialLocation.view === "focus" || session.principal.id === "guest");
+  const [focusMode, setFocusMode] = useState(session.principal.id === "guest" ? false : initialLocation.view === "focus");
   const [focusCommentsOpen, setFocusCommentsOpen] = useState(false);
   const [focusControlsCollapsed, setFocusControlsCollapsed] = useState(false);
   const [focusControlsHoverArmed, setFocusControlsHoverArmed] = useState(true);
