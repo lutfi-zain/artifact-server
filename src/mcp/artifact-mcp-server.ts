@@ -10,7 +10,7 @@ import {
   type ToolAnnotations,
   type ToolCallback,
 } from "@modelcontextprotocol/server";
-import {type Effect, Redacted} from "effect";
+import {Effect, Redacted} from "effect";
 import {z} from "zod";
 
 import {AgentDispatchService} from "../application/agent-dispatch.js";
@@ -1284,6 +1284,188 @@ export function createArtifactMcpServer(
         published,
       );
     }, publicationSummary),
+  );
+
+  registerNudgedTool(
+    "artifact_publish_direct",
+    {
+      title: "Publish artifact directly (1-step publish)",
+      description:
+        "Publish a new artifact or report directly in a single tool call from inline Markdown or HTML, without presigned uploads or external PUT calls. Renders Markdown and Mermaid diagrams automatically.",
+      inputSchema: z.object({
+        accessSetting: accessSettingSchema.default(accessSettings.publicLink).describe("Access setting: 'public_link' (default) or 'account_required'"),
+        content: z.string().optional().describe("Markdown or HTML text content to publish"),
+        entryPath: z.string().default("index.html").describe("Entry filename (default: index.html)"),
+        files: z
+          .array(
+            z.object({
+              content: z.string().describe("File text content"),
+              mediaType: z.string().optional().describe("MIME media type"),
+              path: z.string().min(1).max(1_024).describe("Relative file path"),
+            }).strict(),
+          )
+          .optional()
+          .describe("Optional multiple files to publish instead of a single content string"),
+        format: z.enum(["markdown", "html"]).default("markdown").describe("Content format: 'markdown' (default) or 'html'"),
+        idempotencyKey: idempotencyKeySchema.optional(),
+        name: z.string().min(1).max(200).describe("Artifact title or name"),
+        projectId: optionalProjectIdSchema,
+        tags: z.array(tagSchema).max(20).default([]),
+      }).strict(),
+      outputSchema: publishedVersionSchema,
+      annotations: idempotentWriteAnnotations,
+    },
+    async ({
+      accessSetting,
+      content,
+      entryPath,
+      files,
+      format,
+      idempotencyKey: inputIdempotencyKey,
+      name,
+      projectId,
+      tags,
+    }) =>
+      toolResult(async () => {
+        const idempotencyKey =
+          inputIdempotencyKey ??
+          `direct-${createHash("sha256")
+            .update(name + ":" + Date.now())
+            .digest("hex")
+            .slice(0, 32)}`;
+
+        interface FileToPublish {
+          bytes: Uint8Array;
+          mediaType: string;
+          path: string;
+          sha256: string;
+        }
+
+        const filesToPublish: FileToPublish[] = [];
+
+        if (files && files.length > 0) {
+          for (const f of files) {
+            const bytes = Buffer.from(f.content, "utf8");
+            const sha256 = createHash("sha256").update(bytes).digest("hex");
+            let mediaType = f.mediaType;
+            if (!mediaType) {
+              if (f.path.endsWith(".html") || f.path.endsWith(".htm"))
+                mediaType = "text/html; charset=utf-8";
+              else if (f.path.endsWith(".md"))
+                mediaType = "text/markdown; charset=utf-8";
+              else if (f.path.endsWith(".css"))
+                mediaType = "text/css; charset=utf-8";
+              else if (f.path.endsWith(".js") || f.path.endsWith(".mjs"))
+                mediaType = "text/javascript; charset=utf-8";
+              else if (f.path.endsWith(".json"))
+                mediaType = "application/json; charset=utf-8";
+              else mediaType = "text/plain; charset=utf-8";
+            }
+            filesToPublish.push({bytes, mediaType, path: f.path, sha256});
+          }
+        } else if (content !== undefined) {
+          if (format === "markdown") {
+            const rawMarkdown = content;
+            const mdBytes = Buffer.from(rawMarkdown, "utf8");
+            const mdSha256 = createHash("sha256").update(mdBytes).digest("hex");
+            filesToPublish.push({
+              bytes: mdBytes,
+              mediaType: "text/markdown; charset=utf-8",
+              path: "document.md",
+              sha256: mdSha256,
+            });
+
+            // Also generate an interactive HTML wrapper that renders Mermaid & Markdown for direct URL access
+            const htmlContent = renderMarkdownViewerHtml(name, rawMarkdown);
+            const htmlBytes = Buffer.from(htmlContent, "utf8");
+            const htmlSha256 = createHash("sha256")
+              .update(htmlBytes)
+              .digest("hex");
+            filesToPublish.push({
+              bytes: htmlBytes,
+              mediaType: "text/html; charset=utf-8",
+              path: "index.html",
+              sha256: htmlSha256,
+            });
+          } else {
+            const htmlBytes = Buffer.from(content, "utf8");
+            const htmlSha256 = createHash("sha256")
+              .update(htmlBytes)
+              .digest("hex");
+            filesToPublish.push({
+              bytes: htmlBytes,
+              mediaType: "text/html; charset=utf-8",
+              path: entryPath || "index.html",
+              sha256: htmlSha256,
+            });
+          }
+        } else {
+          throw new Error("Either 'content' or 'files' must be provided.");
+        }
+
+        const declaredFiles = filesToPublish.map((f) => ({
+          mediaType: f.mediaType,
+          path: f.path,
+          sha256: f.sha256,
+          size: f.bytes.length,
+        }));
+
+        const actualEntryPath = filesToPublish.some((f) => f.path === entryPath)
+          ? entryPath
+          : (filesToPublish[0]?.path ?? "index.html");
+
+        const published = await runMcpApplicationEffect(
+          dependencies,
+          StagedUploadService.use((uploads) =>
+            Effect.gen(function*() {
+              const upload = yield* uploads.createUpload({
+                entryPath: actualEntryPath,
+                files: declaredFiles,
+                principal: identity.principal,
+                projectId,
+                routingMode: "static",
+              });
+
+              for (const file of upload.files) {
+                const item = filesToPublish.find((f) => f.path === file.entry.path);
+                if (!item) continue;
+                const stream = new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(item.bytes);
+                    controller.close();
+                  },
+                });
+                yield* uploads.uploadFile({
+                  body: stream,
+                  principal: identity.principal,
+                  projectId: upload.projectId,
+                  storageToken: file.storageToken,
+                  uploadId: upload.id,
+                });
+              }
+
+              return yield* uploads.commitUpload({
+                idempotencyKey,
+                principal: identity.principal,
+                projectId: upload.projectId,
+                target: {
+                  accessSetting,
+                  kind: "new_artifact",
+                  name,
+                  tags,
+                },
+                uploadId: upload.id,
+              });
+            }),
+          ),
+        );
+
+        return publishedVersionProjection(
+          applicationUrl,
+          dependencies.contentDomain,
+          published,
+        );
+      }, publicationSummary),
   );
 
   registerNudgedTool(
@@ -2781,4 +2963,48 @@ function decodePageCursor(token: string | null): {readonly createdAt: string; re
 
 function variableString(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+function renderMarkdownViewerHtml(title: string, markdown: string): string {
+  const safeTitle = title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const encodedMarkdown = Buffer.from(markdown, "utf8").toString("base64");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${safeTitle}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.8.1/github-markdown.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; padding: 2rem 1rem; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; display: flex; justify-content: center; }
+    .markdown-body { box-sizing: border-box; min-width: 200px; max-width: 960px; width: 100%; margin: 0 auto; padding: 32px; background: #0d1117; color: #e6edf3; border-radius: 8px; border: 1px solid #30363d; }
+    @media (prefers-color-scheme: light) {
+      body { background: #f6f8fa; color: #1f2328; }
+      .markdown-body { background: #ffffff; color: #1f2328; border-color: #d0d7de; }
+    }
+    .mermaid { display: flex; justify-content: center; margin: 1.5rem 0; background: transparent; }
+  </style>
+</head>
+<body>
+  <article class="markdown-body" id="content">Rendering...</article>
+  <script>
+    try {
+      const b64 = "${encodedMarkdown}";
+      const raw = decodeURIComponent(escape(atob(b64)));
+      mermaid.initialize({ startOnLoad: false, theme: window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'default' : 'dark' });
+      document.getElementById('content').innerHTML = marked.parse(raw);
+      mermaid.run({ querySelector: '.mermaid, pre code.language-mermaid' });
+    } catch (err) {
+      document.getElementById('content').textContent = "Failed to render markdown: " + err.message;
+    }
+  </script>
+</body>
+</html>`;
 }
