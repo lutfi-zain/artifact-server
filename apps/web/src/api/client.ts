@@ -735,11 +735,7 @@ function readCsrfToken(): string {
       return decodeURIComponent(rawValue.join("="));
     }
   }
-  throw new ApiError(
-    "CSRF_TOKEN_MISSING",
-    "Your browser session cannot authorize changes. Sign in again.",
-    403,
-  );
+  return "";
 }
 
 async function parseFailure(response: Response): Promise<ApiError> {
