@@ -1410,8 +1410,15 @@ export function createArtifactMcpServer(
           size: f.bytes.length,
         }));
 
-        const actualEntryPath = filesToPublish.some((f) => f.path === entryPath)
-          ? entryPath
+        const preferredEntryPath =
+          format === "markdown" && entryPath === "index.html"
+            ? "document.md"
+            : entryPath;
+
+        const actualEntryPath = filesToPublish.some(
+          (f) => f.path === preferredEntryPath,
+        )
+          ? preferredEntryPath
           : (filesToPublish[0]?.path ?? "index.html");
 
         const published = await runMcpApplicationEffect(
