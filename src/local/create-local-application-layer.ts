@@ -900,6 +900,26 @@ export function createApplicationLayer(
           return installationAccess.authenticateManagedApiKey(credential);
         }
         if (externalVerifier !== null) return externalVerifier.verify(credential);
+        const oauthVerifier = adapters.externalMcpOAuthVerifier;
+        if (oauthVerifier !== null) {
+          return Effect.gen(function*() {
+            const verified = yield* oauthVerifier.verify(credential);
+            let principal = yield* installationAccess.authenticateExternalSubject(
+              verified.provider,
+              verified.subject,
+            );
+            if (principal === null) {
+              const identity = yield* oauthVerifier.resolveIdentity(
+                verified,
+                credential,
+              );
+              principal = yield* installationAccess.authenticateExternalIdentity(
+                identity,
+              );
+            }
+            return principal;
+          });
+        }
         return Effect.fail(new AuthenticationRequired({
           message: "A valid Artifact Server API key is required.",
         }));
