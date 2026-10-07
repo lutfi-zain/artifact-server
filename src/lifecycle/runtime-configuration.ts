@@ -867,11 +867,11 @@ function assertBrowserIsolation(
   const publishedDomain = getDomain(contentDomain, {allowPrivateDomains: true});
   if (
     applicationDomain === null || publishedDomain === null ||
-    applicationDomain === publishedDomain
+    origin.hostname.toLowerCase() === contentDomain.toLowerCase()
   ) {
     return invalidValue(
       "ARTIFACT_SERVER_CONTENT_DOMAIN",
-      "The application and published content must use different registrable domains.",
+      "The application and published content must use different hostnames.",
       "invalid_origin",
     );
   }
