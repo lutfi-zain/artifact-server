@@ -982,7 +982,8 @@ function ArtifactReview({
     }
   };
 
-  const canComment = selectedProject?.archivedAt === null
+  const isGuest = session.principal.id === "guest";
+  const canComment = !isGuest && selectedProject?.archivedAt === null
     && (
       (
         session.principal.kind === "human"
@@ -990,22 +991,28 @@ function ArtifactReview({
       )
       || session.principal.capabilities.includes("comment:write")
     );
-  const canManageProjects = (
-    session.principal.kind === "human"
-    && session.principal.authorizedByPrincipalId === null
-  ) || session.principal.capabilities.includes("project:manage");
-  const canManageArtifacts = selectedProject?.archivedAt === null && (
+  const canManageProjects = !isGuest && (
+    (
+      session.principal.kind === "human"
+      && session.principal.authorizedByPrincipalId === null
+    )
+    || session.principal.capabilities.includes("project:manage")
+  );
+  const canManageArtifacts = !isGuest && selectedProject?.archivedAt === null && (
     (
       session.principal.kind === "human"
       && session.principal.authorizedByPrincipalId === null
     )
     || session.principal.capabilities.includes("artifact:manage:any")
   );
-  const canDeleteAnyComment = (
-    session.principal.kind === "human"
-    && session.principal.authorizedByPrincipalId === null
-    && session.principal.membershipRole === "administrator"
-  ) || session.principal.capabilities.includes("artifact:manage:any");
+  const canDeleteAnyComment = !isGuest && (
+    (
+      session.principal.kind === "human"
+      && session.principal.authorizedByPrincipalId === null
+      && session.principal.membershipRole === "administrator"
+    )
+    || session.principal.capabilities.includes("artifact:manage:any")
+  );
   const previewKind = reviewPreviewKind(selectedVersion, selectedPath);
   const download = reviewDownload(
     projectId,
@@ -2187,6 +2194,7 @@ function DetailsInspector({
       </InspectorSection>
       <TagsInspector
         artifact={details.artifact}
+        canManage={canManage}
         key={details.artifact.id}
         onChange={onTagsChange}
       />
@@ -2222,9 +2230,11 @@ function DetailsInspector({
 
 function TagsInspector({
   artifact,
+  canManage,
   onChange,
 }: {
   readonly artifact: ArtifactDetails["artifact"];
+  readonly canManage: boolean;
   readonly onChange: (tags: readonly string[]) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -2258,7 +2268,7 @@ function TagsInspector({
 
   return (
     <InspectorSection
-      action={editing ? null : (
+      action={!canManage || editing ? null : (
         <button
           className="as-inspector-section__action"
           onClick={() => setEditing(true)}
