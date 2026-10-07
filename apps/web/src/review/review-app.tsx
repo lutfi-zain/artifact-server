@@ -594,10 +594,10 @@ function ArtifactReview({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<Error | null>(null);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("details");
-  const [catalogOpen, setCatalogOpen] = useState(true);
+  const [catalogOpen, setCatalogOpen] = useState(session.principal.id !== "guest");
   const [inspectorOpen, setInspectorOpen] = useState(readInitialInspectorOpen);
   const [opening, setOpening] = useState(false);
-  const [focusMode, setFocusMode] = useState(initialLocation.view === "focus");
+  const [focusMode, setFocusMode] = useState(initialLocation.view === "focus" || session.principal.id === "guest");
   const [focusCommentsOpen, setFocusCommentsOpen] = useState(false);
   const [focusControlsCollapsed, setFocusControlsCollapsed] = useState(false);
   const [focusControlsHoverArmed, setFocusControlsHoverArmed] = useState(true);
@@ -734,7 +734,10 @@ function ArtifactReview({
     cursor: string | null,
     replace: boolean,
   ): Promise<ArtifactListLoadResult> => {
-    if (projectId === "") return "skipped";
+    if (projectId === "" || session.principal.id === "guest") {
+      setListLoading(false);
+      return "skipped";
+    }
     const requestGeneration = ++catalogRequestGenerationRef.current;
     setListLoading(true);
     setListError(null);
@@ -1431,7 +1434,7 @@ function ArtifactReview({
         </Dialog.Portal>
       </Dialog.Root>
 
-      {!focusMode && catalogMotion.mounted ? (
+      {!focusMode && session.principal.id !== "guest" && catalogMotion.mounted ? (
         <div className="as-panel-assembly" data-side="left">
           <motion.div
             className="as-panel-clip as-catalog-clip"
@@ -1710,16 +1713,18 @@ function ArtifactReview({
                     className="as-button as-focus-controls__button"
                     download={download}
                   />
-                  <button
-                    aria-keyshortcuts="F"
-                    className="as-button as-focus-controls__button"
-                    onClick={exitFocusMode}
-                    title="Exit full screen (F)"
-                    type="button"
-                  >
-                    <HugeiconsIcon aria-hidden="true" icon={ArrowShrinkIcon} strokeWidth={1.8} />
-                    Exit full screen
-                  </button>
+                  {session.principal.id !== "guest" ? (
+                    <button
+                      aria-keyshortcuts="F"
+                      className="as-button as-focus-controls__button"
+                      onClick={exitFocusMode}
+                      title="Exit full screen (F)"
+                      type="button"
+                    >
+                      <HugeiconsIcon aria-hidden="true" icon={ArrowShrinkIcon} strokeWidth={1.8} />
+                      Exit full screen
+                    </button>
+                  ) : null}
                   <button
                     aria-label="Hide viewer controls"
                     className="as-icon-button as-focus-controls__collapse"
