@@ -403,6 +403,39 @@ export function ReviewApp() {
       setSessionState("ready");
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("artifact")) {
+          setSession({
+            authenticationMethod: "session",
+            capabilities: {
+              gitHistory: {
+                limits: {
+                  fileCopyBytes: 0,
+                  logicalCopiedBytes: 0,
+                  logicalReservedBytes: 0,
+                  storageBudgetBytes: null,
+                  versionCopyBytes: 0,
+                },
+                provider: null,
+                providerState: "disabled",
+              },
+              linkedArtifacts: false,
+            },
+            principal: {
+              authorizedByPrincipalId: null,
+              capabilities: [],
+              displayName: "Guest Viewer",
+              email: "guest@membran.app",
+              id: "guest",
+              installationId: "",
+              kind: "human",
+              membershipRole: "member",
+            },
+          });
+          setProjects([]);
+          setSessionState("ready");
+          return;
+        }
         setSession(null);
         setSessionState("unauthenticated");
       } else {
@@ -423,6 +456,10 @@ export function ReviewApp() {
     const expire = (): void => {
       if (accessContextRef.current?.accessMode === "local_owner") {
         void bootstrap();
+        return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("artifact")) {
         return;
       }
       setSession(null);
